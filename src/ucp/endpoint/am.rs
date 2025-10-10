@@ -99,13 +99,13 @@ impl RawMsg {
 }
 
 /// Active message message.
-pub struct AmMsg<'a> {
-    worker: &'a Worker,
+pub struct AmMsg {
+    worker: Rc<Worker>,
     msg: RawMsg,
 }
 
-impl<'a> AmMsg<'a> {
-    fn from_raw(worker: &'a Worker, msg: RawMsg) -> Self {
+impl AmMsg {
+    fn from_raw(worker: Rc<Worker>, msg: RawMsg) -> Self {
         AmMsg { worker, msg }
     }
 
@@ -350,7 +350,7 @@ impl<'a> AmMsg<'a> {
     }
 }
 
-impl<'a> Drop for AmMsg<'a> {
+impl Drop for AmMsg {
     fn drop(&mut self) {
         if let Some(data) = self.msg.data.take() {
             self.drop_msg(data);
@@ -360,19 +360,19 @@ impl<'a> Drop for AmMsg<'a> {
 
 /// Active message stream.
 #[derive(Clone)]
-pub struct AmStream<'a> {
-    worker: &'a Worker,
+pub struct AmStream {
+    worker: Rc<Worker>,
     inner: Rc<AmStreamInner>,
 }
 
-impl<'a> AmStream<'a> {
-    fn new(worker: &'a Worker, inner: Rc<AmStreamInner>) -> Self {
+impl AmStream {
+    fn new(worker: Rc<Worker>, inner: Rc<AmStreamInner>) -> Self {
         AmStream { worker, inner }
     }
 
     /// Wait active message.
-    pub async fn wait_msg(&self) -> Option<AmMsg<'_>> {
-        self.inner.wait_msg(self.worker).await
+    pub async fn wait_msg(&self) -> Option<AmMsg> {
+        self.inner.wait_msg(self.worker.clone()).await
     }
 }
 
@@ -408,7 +408,7 @@ impl AmStreamInner {
     }
 
     /// Wait active message.
-    async fn wait_msg<'a>(&self, worker: &'a Worker) -> Option<AmMsg<'a>> {
+    async fn wait_msg(&self, worker: Rc<Worker>) -> Option<AmMsg> {
         // todo: how to make this thread safe?
         while !self.unregistered.load(std::sync::atomic::Ordering::Relaxed) {
             if let Some(msg) = self.msgs.pop() {
@@ -425,9 +425,9 @@ impl AmStreamInner {
 impl Worker {
     /// Register active message stream for `id`.
     /// Message of this `id` can be received with `am_recv`.
-    pub fn am_stream(&self, id: u16) -> Result<AmStream<'_>, Error> {
+    pub fn am_stream(self: Rc<Worker>, id: u16) -> Result<AmStream, Error> {
         if let Some(inner) = self.am_streams.read().unwrap().get(&id) {
-            return Ok(AmStream::new(self, inner.clone()));
+            return Ok(AmStream::new(self.clone(), inner.clone()));
         }
 
         unsafe extern "C" fn callback(
