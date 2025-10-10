@@ -366,8 +366,8 @@ pub struct AmStream {
 }
 
 impl AmStream {
-    fn new(worker: Rc<Worker>, inner: Rc<AmStreamInner>) -> Self {
-        AmStream { worker, inner }
+    fn new(worker: &Rc<Worker>, inner: Rc<AmStreamInner>) -> Self {
+        AmStream { worker: worker.clone(), inner }
     }
 
     /// Wait active message.
@@ -425,9 +425,9 @@ impl AmStreamInner {
 impl Worker {
     /// Register active message stream for `id`.
     /// Message of this `id` can be received with `am_recv`.
-    pub fn am_stream(self: Rc<Worker>, id: u16) -> Result<AmStream, Error> {
+    pub fn am_stream(self: &Rc<Self>, id: u16) -> Result<AmStream, Error> {
         if let Some(inner) = self.am_streams.read().unwrap().get(&id) {
-            return Ok(AmStream::new(self.clone(), inner.clone()));
+            return Ok(AmStream::new(self, inner.clone()));
         }
 
         unsafe extern "C" fn callback(
@@ -460,7 +460,7 @@ impl Worker {
         }
         self.am_streams.write().unwrap().insert(id, stream.clone());
 
-        return Ok(AmStream::new(self, stream));
+        return Ok(AmStream::new(&self, stream));
     }
 
     /// Register active message handler for `id`.
