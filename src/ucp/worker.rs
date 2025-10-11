@@ -106,8 +106,10 @@ impl Worker {
         Error::from_status(status)?;
 
         Ok(WorkerAddress {
-            handle: unsafe { handle.assume_init() },
-            length: unsafe { length.assume_init() } as usize,
+            inner: WorkerAddressInner {
+                handle: unsafe { handle.assume_init() },
+                length: unsafe { length.assume_init() },
+            },
             worker: self,
         })
     }
@@ -118,7 +120,7 @@ impl Worker {
     }
 
     /// Connect to a remote worker by address.
-    pub fn connect_addr(self: &Rc<Self>, addr: &WorkerAddress) -> Result<Endpoint, Error> {
+    pub fn connect_addr(self: &Rc<Self>, addr: &WorkerAddressInner) -> Result<Endpoint, Error> {
         Endpoint::connect_addr(self, addr.handle)
     }
 
@@ -180,19 +182,37 @@ impl AsRawFd for Worker {
 /// The address of the worker object.
 #[derive(Debug)]
 pub struct WorkerAddress<'a> {
-    handle: *mut ucp_address_t,
-    length: usize,
+    inner: WorkerAddressInner,
     worker: &'a Worker,
+}
+
+/// Inner representation of the worker address.
+#[derive(Debug)]
+pub struct WorkerAddressInner {
+    /// Pointer to the worker address.
+    pub handle: *mut ucp_address_t,
+    /// Length of the worker address.
+    pub length: usize,
 }
 
 impl<'a> AsRef<[u8]> for WorkerAddress<'a> {
     fn as_ref(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.handle as *const u8, self.length) }
+        unsafe { std::slice::from_raw_parts(self.inner.handle as *const u8, self.inner.length) }
+    }
+}
+
+impl From<&[u8]> for WorkerAddressInner {
+    fn from(value: &[u8]) -> Self {
+        assert!(value.len() <= std::usize::MAX);
+        WorkerAddressInner {
+            handle: value.as_ptr() as *mut ucp_address_t,
+            length: value.len(),
+        }
     }
 }
 
 impl<'a> Drop for WorkerAddress<'a> {
     fn drop(&mut self) {
-        unsafe { ucp_worker_release_address(self.worker.handle, self.handle) }
+        unsafe { ucp_worker_release_address(self.worker.handle, self.inner.handle) }
     }
 }
