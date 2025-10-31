@@ -109,6 +109,7 @@ impl Worker {
             inner: WorkerAddressInner {
                 handle: unsafe { handle.assume_init() },
                 length: unsafe { length.assume_init() },
+                _owned_buffer: None,
             },
             worker: self,
         })
@@ -193,6 +194,8 @@ pub struct WorkerAddressInner {
     pub handle: *mut ucp_address_t,
     /// Length of the worker address.
     pub length: usize,
+    /// Owned buffer for deserialized addresses (None for addresses from worker.address())
+    _owned_buffer: Option<Box<[u8]>>,
 }
 
 impl<'a> AsRef<[u8]> for WorkerAddress<'a> {
@@ -204,9 +207,15 @@ impl<'a> AsRef<[u8]> for WorkerAddress<'a> {
 impl From<&[u8]> for WorkerAddressInner {
     fn from(value: &[u8]) -> Self {
         assert!(value.len() <= std::usize::MAX);
+        // Copy the address bytes to owned buffer to ensure the pointer remains valid
+        let mut buffer = value.to_vec().into_boxed_slice();
+        let handle = buffer.as_mut_ptr() as *mut ucp_address_t;
+        let length = buffer.len();
+
         WorkerAddressInner {
-            handle: value.as_ptr() as *mut ucp_address_t,
-            length: value.len(),
+            handle,
+            length,
+            _owned_buffer: Some(buffer),
         }
     }
 }
