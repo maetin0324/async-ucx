@@ -8,9 +8,9 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 static SHARED_FILE: &str = "endpoint_info.data";
 
-const N: usize = 1 << 20;
+const N: usize = 1 << 15;
 const WINDOW: usize = 2048; // まずは 512〜4096 の範囲で要実験
-const DATA_SIZE: usize = 1 << 24;
+const DATA_SIZE: usize = 1 << 20;
 static HEADER: [u8; 256] = [0u8; 256];
 
 #[tokio::main(flavor = "current_thread")]

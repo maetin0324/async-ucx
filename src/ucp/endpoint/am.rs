@@ -28,19 +28,21 @@ pub enum AmDataType {
 enum AmData {
     Eager(Vec<u8>),
     Data(&'static [u8]),
-    Rndv(&'static [u8]),
+    Rndv { desc: *mut c_void, len: usize },
 }
 
 impl AmData {
-    fn from_raw(data: &'static [u8], attr: u64) -> Option<AmData> {
-        if data.is_empty() {
+    fn from_raw(data: *mut c_void, len: usize, attr: u64) -> Option<AmData> {
+        if len == 0 {
             None
         } else if attr & ucp_am_recv_attr_t::UCP_AM_RECV_ATTR_FLAG_DATA as u64 != 0 {
-            Some(AmData::Data(data))
+            let slice = unsafe { slice::from_raw_parts(data as *const u8, len) };
+            Some(AmData::Data(slice))
         } else if attr & ucp_am_recv_attr_t::UCP_AM_RECV_ATTR_FLAG_RNDV as u64 != 0 {
-            Some(AmData::Rndv(data))
+            Some(AmData::Rndv { desc: data, len })
         } else {
-            Some(AmData::Eager(data.to_owned()))
+            let slice = unsafe { slice::from_raw_parts(data as *const u8, len) };
+            Some(AmData::Eager(slice.to_owned()))
         }
     }
 
@@ -49,7 +51,7 @@ impl AmData {
         match self {
             AmData::Eager(_) => AmDataType::Eager,
             AmData::Data(_) => AmDataType::Data,
-            AmData::Rndv(_) => AmDataType::Rndv,
+            AmData::Rndv { .. } => AmDataType::Rndv,
         }
     }
 
@@ -67,7 +69,7 @@ impl AmData {
         match self {
             AmData::Eager(data) => data.len(),
             AmData::Data(data) => data.len(),
-            AmData::Rndv(desc) => desc.len(),
+            AmData::Rndv { len, .. } => *len,
         }
     }
 }
@@ -84,14 +86,15 @@ impl RawMsg {
     fn from_raw(
         id: u16,
         header: &[u8],
-        data: &'static [u8],
+        data: *mut c_void,
+        data_len: usize,
         reply_ep: ucp_ep_h,
         attr: u64,
     ) -> Self {
         RawMsg {
             id,
             header: header.to_owned(),
-            data: AmData::from_raw(data, attr),
+            data: AmData::from_raw(data, data_len, attr),
             reply_ep,
             attr,
         }
@@ -225,9 +228,9 @@ impl AmMsg {
                 self.drop_msg(AmData::Data(data));
                 Ok(size)
             }
-            Some(AmData::Rndv(desc)) => {
+            Some(AmData::Rndv { desc, len }) => {
                 // rndv message, need to receive
-                let (data_desc, data_len) = (desc.as_ptr(), desc.len());
+                let (data_desc, data_len) = (desc, len);
 
                 unsafe extern "C" fn callback(
                     request: *mut c_void,
@@ -270,7 +273,7 @@ impl AmMsg {
                 let status = unsafe {
                     ucp_am_recv_data_nbx(
                         self.worker.handle,
-                        data_desc as _,
+                        data_desc,
                         buffer as _,
                         count as _,
                         param.as_ptr(),
@@ -343,8 +346,8 @@ impl AmMsg {
             AmData::Data(data) => unsafe {
                 ucp_am_data_release(self.worker.handle, data.as_ptr() as _);
             },
-            AmData::Rndv(data) => unsafe {
-                ucp_am_data_release(self.worker.handle, data.as_ptr() as _);
+            AmData::Rndv { desc, .. } => unsafe {
+                ucp_am_data_release(self.worker.handle, desc);
             },
         }
     }
@@ -367,7 +370,10 @@ pub struct AmStream {
 
 impl AmStream {
     fn new(worker: &Rc<Worker>, inner: Rc<AmStreamInner>) -> Self {
-        AmStream { worker: worker.clone(), inner }
+        AmStream {
+            worker: worker.clone(),
+            inner,
+        }
     }
 
     /// Wait active message.
@@ -401,8 +407,15 @@ impl AmStreamInner {
     }
 
     // callback function
-    fn callback(&self, header: &[u8], data: &'static [u8], reply: ucp_ep_h, attr: u64) {
-        let msg = RawMsg::from_raw(self.id, header, data, reply, attr);
+    fn callback(
+        &self,
+        header: &[u8],
+        data: *mut c_void,
+        data_len: usize,
+        reply: ucp_ep_h,
+        attr: u64,
+    ) {
+        let msg = RawMsg::from_raw(self.id, header, data, data_len, reply, attr);
         self.msgs.push(msg);
         self.notify.notify_one();
     }
@@ -440,10 +453,9 @@ impl Worker {
         ) -> ucs_status_t {
             let handler = &*(arg as *const AmStreamInner);
             let header = slice::from_raw_parts(header as *const u8, header_len as usize);
-            let data = slice::from_raw_parts(data as *const u8, data_len as usize);
 
             let param = &*param;
-            handler.callback(header, data, param.reply_ep, param.recv_attr);
+            handler.callback(header, data, data_len, param.reply_ep, param.recv_attr);
 
             const DATA_FLAG: u64 = ucp_am_recv_attr_t::UCP_AM_RECV_ATTR_FLAG_DATA as u64
                 | ucp_am_recv_attr_t::UCP_AM_RECV_ATTR_FLAG_RNDV as u64;
