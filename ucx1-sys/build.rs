@@ -14,6 +14,10 @@ fn main() {
 
     // Tell cargo to invalidate the built crate whenever the wrapper changes
     println!("cargo:rerun-if-changed=wrapper.h");
+    // Only rerun if build.rs itself changes
+    println!("cargo:rerun-if-changed=build.rs");
+    // Only rerun if ucx submodule changes
+    println!("cargo:rerun-if-changed=ucx");
 
     build_from_source();
 
@@ -50,13 +54,16 @@ fn main() {
 
 fn build_from_source() {
     let dst = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let build_marker = dst.join(".ucx-build-complete");
 
-    // Return if the outputs exist.
-    if dst.join("lib/libuct.a").exists()
+    // Return if the build marker exists and all libraries exist.
+    if build_marker.exists()
+        && dst.join("lib/libuct.a").exists()
         && dst.join("lib/libucs.a").exists()
         && dst.join("lib/libucm.a").exists()
         && dst.join("lib/libucp.a").exists()
     {
+        println!("cargo:warning=UCX already built, skipping build");
         return;
     }
 
@@ -107,4 +114,7 @@ fn build_from_source() {
         .arg("install")
         .status()
         .expect("failed to make install");
+
+    // Create build marker to indicate successful build
+    std::fs::write(&build_marker, "").expect("failed to create build marker");
 }

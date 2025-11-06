@@ -1,0 +1,12 @@
+[package]
+name = "am-rndv"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.99"
+futures = "0.3.31"
+async-ucx = { path = "../.." , features = ["am"] }
+tokio = { version = "1.48.0", features = ["full"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
