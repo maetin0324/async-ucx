@@ -2,6 +2,7 @@ use crossbeam::queue::SegQueue;
 use tokio::sync::Notify;
 
 use super::*;
+use ucx1_sys::ucp_dt_iov_t;
 use std::{
     io::{IoSlice, IoSliceMut},
     slice,
@@ -559,6 +560,7 @@ async fn am_send(
     }
 
     let mut param = MaybeUninit::<ucp_request_param_t>::uninit();
+    let mut _iov_storage: Option<Vec<ucp_dt_iov_t>> = None;
     let (buffer, count) = unsafe {
         let param = &mut *param.as_mut_ptr();
         param.op_attr_mask = ucp_op_attr_t::UCP_OP_ATTR_FIELD_CALLBACK as u32
@@ -579,12 +581,25 @@ async fn am_send(
             param.flags |= ucp_send_am_flags::UCP_AM_SEND_FLAG_REPLY.0;
         }
 
-        if data.len() == 1 {
+        if data.is_empty() {
+            param.datatype = ucp_dt_make_contig(1);
+            (std::ptr::null(), 0)
+        } else if data.len() == 1 {
             param.datatype = ucp_dt_make_contig(1);
             (data[0].as_ptr(), data[0].len())
         } else {
             param.datatype = ucp_dt_type::UCP_DATATYPE_IOV as _;
-            (data.as_ptr() as _, data.len())
+            let mut iov = Vec::with_capacity(data.len());
+            for slice in data {
+                iov.push(ucp_dt_iov_t {
+                    buffer: slice.as_ptr() as *mut c_void,
+                    length: slice.len(),
+                });
+            }
+            let ptr = iov.as_ptr();
+            let len = iov.len();
+            _iov_storage = Some(iov);
+            (ptr as _, len)
         }
     };
 
