@@ -10,7 +10,7 @@ pub struct MemoryHandle {
 
 impl MemoryHandle {
     /// Register memory region.
-    pub fn register(context: &Arc<Context>, region: &mut [u8]) -> Self {
+    pub fn register(context: &Arc<Context>, region: &[u8]) -> Self {
         #[allow(invalid_value)]
         #[allow(clippy::uninit_assumed_init)]
         let params = ucp_mem_map_params_t {
