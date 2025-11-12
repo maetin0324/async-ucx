@@ -15,10 +15,16 @@ impl MemoryHandle {
         #[allow(clippy::uninit_assumed_init)]
         let params = ucp_mem_map_params_t {
             field_mask: (ucp_mem_map_params_field::UCP_MEM_MAP_PARAM_FIELD_ADDRESS
-                | ucp_mem_map_params_field::UCP_MEM_MAP_PARAM_FIELD_LENGTH)
+                | ucp_mem_map_params_field::UCP_MEM_MAP_PARAM_FIELD_LENGTH
+                | ucp_mem_map_params_field::UCP_MEM_MAP_PARAM_FIELD_PROT)
                 .0 as u64,
             address: region.as_ptr() as _,
             length: region.len() as _,
+            prot: (ucp_mem_map_prot::UCP_MEM_MAP_PROT_LOCAL_READ
+                | ucp_mem_map_prot::UCP_MEM_MAP_PROT_LOCAL_WRITE
+                | ucp_mem_map_prot::UCP_MEM_MAP_PROT_REMOTE_READ
+                | ucp_mem_map_prot::UCP_MEM_MAP_PROT_REMOTE_WRITE)
+                .0 as u64,
             ..unsafe { MaybeUninit::zeroed().assume_init() }
         };
         let mut handle = MaybeUninit::<*mut ucp_mem>::uninit();
