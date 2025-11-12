@@ -1,4 +1,8 @@
 use super::*;
+use ucx1_sys::{
+    UCP_MEM_MAP_PROT_LOCAL_READ, UCP_MEM_MAP_PROT_LOCAL_WRITE, UCP_MEM_MAP_PROT_REMOTE_READ,
+    UCP_MEM_MAP_PROT_REMOTE_WRITE,
+};
 
 /// A memory region allocated through UCP library,
 /// which is optimized for remote memory access operations.
@@ -20,11 +24,10 @@ impl MemoryHandle {
                 .0 as u64,
             address: region.as_ptr() as _,
             length: region.len() as _,
-            prot: (ucp_mem_map_prot::UCP_MEM_MAP_PROT_LOCAL_READ
-                | ucp_mem_map_prot::UCP_MEM_MAP_PROT_LOCAL_WRITE
-                | ucp_mem_map_prot::UCP_MEM_MAP_PROT_REMOTE_READ
-                | ucp_mem_map_prot::UCP_MEM_MAP_PROT_REMOTE_WRITE)
-                .0 as u64,
+            prot: (UCP_MEM_MAP_PROT_LOCAL_READ as u32
+                | UCP_MEM_MAP_PROT_LOCAL_WRITE as u32
+                | UCP_MEM_MAP_PROT_REMOTE_READ as u32
+                | UCP_MEM_MAP_PROT_REMOTE_WRITE as u32),
             ..unsafe { MaybeUninit::zeroed().assume_init() }
         };
         let mut handle = MaybeUninit::<*mut ucp_mem>::uninit();
