@@ -254,6 +254,7 @@ impl AmMsg {
                     iov.len()
                 );
                 let mut param = MaybeUninit::<ucp_request_param_t>::uninit();
+                let mut _iov_storage: Option<Vec<ucp_dt_iov_t>> = None;
                 let (buffer, count) = unsafe {
                     let param = &mut *param.as_mut_ptr();
                     param.op_attr_mask = ucp_op_attr_t::UCP_OP_ATTR_FIELD_CALLBACK as u32
@@ -267,7 +268,18 @@ impl AmMsg {
                         (iov[0].as_ptr(), iov[0].len())
                     } else {
                         param.datatype = ucp_dt_type::UCP_DATATYPE_IOV as _;
-                        (iov.as_ptr() as _, iov.len())
+                        // Convert IoSliceMut to ucp_dt_iov_t for UCX
+                        let mut ucx_iov = Vec::with_capacity(iov.len());
+                        for slice in iov {
+                            ucx_iov.push(ucp_dt_iov_t {
+                                buffer: slice.as_ptr() as *mut c_void,
+                                length: slice.len(),
+                            });
+                        }
+                        let ptr = ucx_iov.as_ptr();
+                        let len = ucx_iov.len();
+                        _iov_storage = Some(ucx_iov);
+                        (ptr as _, len)
                     }
                 };
 
