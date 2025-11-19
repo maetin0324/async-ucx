@@ -208,6 +208,7 @@ impl Endpoint {
     }
 
     /// This routine flushes all outstanding AMO and RMA communications on the endpoint.
+    #[async_backtrace::framed]
     pub async fn flush(&self) -> Result<(), Error> {
         let handle = self.get_handle()?;
         trace!("flush: endpoint={:?}", handle);
@@ -232,6 +233,7 @@ impl Endpoint {
     }
 
     /// This routine close connection.
+    #[async_backtrace::framed]
     pub async fn close(&self, force: bool) -> Result<(), Error> {
         if force && self.is_closed() {
             return Ok(());

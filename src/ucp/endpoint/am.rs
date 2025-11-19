@@ -155,6 +155,7 @@ impl AmMsg {
     }
 
     /// Receive the message data.
+    #[async_backtrace::framed]
     pub async fn recv_data(&mut self) -> Result<Vec<u8>, Error> {
         match self.msg.data.take() {
             None => Ok(Vec::new()),
@@ -183,6 +184,7 @@ impl AmMsg {
     /// # Safety
     /// User needs to ensure that the buffer is large enough to hold the data.
     /// Otherwise, it will cause memory corruption.
+    #[async_backtrace::framed]
     pub async fn recv_data_single(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         if !self.contains_data() {
             Ok(0)
@@ -193,6 +195,7 @@ impl AmMsg {
     }
 
     /// Receive the message data.
+    #[async_backtrace::framed]
     pub async fn recv_data_vectored(&mut self, iov: &[IoSliceMut<'_>]) -> Result<usize, Error> {
         fn copy_data_to_iov(data: &[u8], iov: &[IoSliceMut<'_>]) -> Result<usize, Error> {
             // return error if buffer size < data length, same with ucx
@@ -390,6 +393,7 @@ impl AmStream {
     }
 
     /// Wait active message.
+    #[async_backtrace::framed]
     pub async fn wait_msg(&self) -> Option<AmMsg> {
         self.inner.wait_msg(self.worker.clone()).await
     }
@@ -520,6 +524,7 @@ impl Worker {
 /// Active message endpoint.
 impl Endpoint {
     /// Send active message.
+    #[async_backtrace::framed]
     pub async fn am_send(
         &self,
         id: u32,
@@ -534,6 +539,7 @@ impl Endpoint {
     }
 
     /// Send active message.
+    #[async_backtrace::framed]
     pub async fn am_send_vectorized(
         &self,
         id: u32,

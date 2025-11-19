@@ -119,6 +119,7 @@ impl Drop for RKey {
 
 impl Endpoint {
     /// Stores a contiguous block of data into remote memory.
+    #[async_backtrace::framed]
     pub async fn put(&self, buf: &[u8], remote_addr: u64, rkey: &RKey) -> Result<(), Error> {
         trace!("put: endpoint={:?} len={}", self.handle, buf.len());
         unsafe extern "C" fn callback(request: *mut c_void, status: ucs_status_t) {
@@ -151,6 +152,7 @@ impl Endpoint {
     }
 
     /// Loads a contiguous block of data from remote memory.
+    #[async_backtrace::framed]
     pub async fn get(&self, buf: &mut [u8], remote_addr: u64, rkey: &RKey) -> Result<(), Error> {
         trace!("get: endpoint={:?} len={}", self.handle, buf.len());
         unsafe extern "C" fn callback(request: *mut c_void, status: ucs_status_t) {

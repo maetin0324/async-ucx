@@ -48,6 +48,7 @@ impl Worker {
     }
 
     /// Make progress on the worker.
+    #[async_backtrace::framed]
     pub async fn polling(self: Rc<Self>) {
         while Rc::strong_count(&self) > 1 {
             while self.progress() != 0 {}
@@ -60,6 +61,7 @@ impl Worker {
     /// This function register `event_fd` on tokio's event loop and wait `event_fd` become readable,
     ////  then call progress function.
     #[cfg(feature = "event")]
+    #[async_backtrace::framed]
     pub async fn event_poll(self: Rc<Self>) -> Result<(), Error> {
         let fd = self.event_fd()?;
         let wait_fd = AsyncFd::new(fd).unwrap();
@@ -126,11 +128,13 @@ impl Worker {
     }
 
     /// Connect to a remote listener.
+    #[async_backtrace::framed]
     pub async fn connect_socket(self: &Rc<Self>, addr: SocketAddr) -> Result<Endpoint, Error> {
         Endpoint::connect_socket(self, addr).await
     }
 
     /// Accept a connection request.
+    #[async_backtrace::framed]
     pub async fn accept(self: &Rc<Self>, connection: ConnectionRequest) -> Result<Endpoint, Error> {
         Endpoint::accept(self, connection).await
     }

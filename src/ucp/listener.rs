@@ -99,6 +99,7 @@ impl Listener {
     }
 
     /// Waiting for the next connection request.
+    #[async_backtrace::framed]
     pub async fn next(&mut self) -> ConnectionRequest {
         self.recver.next().await.unwrap()
     }
