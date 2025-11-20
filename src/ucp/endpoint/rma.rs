@@ -193,6 +193,7 @@ mod tests {
         spawn_thread!(_put_get()).join().unwrap();
     }
 
+    #[async_backtrace::framed]
     async fn _put_get() {
         let context1 = Context::new().unwrap();
         let worker1 = context1.create_worker().unwrap();

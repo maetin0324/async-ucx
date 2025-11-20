@@ -122,6 +122,7 @@ impl Endpoint {
         Ok(Self { handle, inner })
     }
 
+    #[async_backtrace::framed]
     pub(super) async fn connect_socket(
         worker: &Rc<Worker>,
         addr: SocketAddr,
@@ -166,6 +167,7 @@ impl Endpoint {
         Endpoint::create(worker, params)
     }
 
+    #[async_backtrace::framed]
     pub(super) async fn accept(
         worker: &Rc<Worker>,
         connection: ConnectionRequest,

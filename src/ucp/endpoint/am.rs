@@ -563,6 +563,7 @@ pub enum AmProto {
     Rndv,
 }
 
+#[async_backtrace::framed]
 async fn am_send(
     endpoint: ucp_ep_h,
     id: u32,
