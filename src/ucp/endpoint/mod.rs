@@ -228,7 +228,11 @@ impl Endpoint {
             trace!("flush: complete");
             Ok(())
         } else if UCS_PTR_IS_PTR(status) {
-            request_handle(status, poll_normal).await
+            RequestHandle {
+                ptr: status,
+                poll_fn: poll_normal,
+            }
+            .await
         } else {
             Error::from_ptr(status)
         }
@@ -336,10 +340,4 @@ unsafe fn poll_normal(ptr: ucs_status_ptr_t) -> Poll<Result<(), Error>> {
     } else {
         Poll::Ready(Error::from_status(status))
     }
-}
-
-/// Wrapper function to create a RequestHandle with async-backtrace support
-#[async_backtrace::framed]
-async fn request_handle<T>(ptr: ucs_status_ptr_t, poll_fn: unsafe fn(ucs_status_ptr_t) -> Poll<T>) -> T {
-    RequestHandle { ptr, poll_fn }.await
 }

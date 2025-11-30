@@ -141,8 +141,11 @@ impl Endpoint {
             trace!("put: complete.");
             Ok(())
         } else if UCS_PTR_IS_PTR(status) {
-            request_handle(status, poll_normal,
-            ).await
+            RequestHandle {
+                ptr: status,
+                poll_fn: poll_normal,
+            }
+            .await
         } else {
             Error::from_ptr(status)
         }
@@ -171,8 +174,11 @@ impl Endpoint {
             trace!("get: complete.");
             Ok(())
         } else if UCS_PTR_IS_PTR(status) {
-            request_handle(status, poll_normal,
-            ).await
+            RequestHandle {
+                ptr: status,
+                poll_fn: poll_normal,
+            }
+            .await
         } else {
             Error::from_ptr(status)
         }

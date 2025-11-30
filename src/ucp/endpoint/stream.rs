@@ -27,8 +27,11 @@ impl Endpoint {
         if status.is_null() {
             trace!("stream_send: complete");
         } else if UCS_PTR_IS_PTR(status) {
-            request_handle(status, poll_normal,
-            ).await?;
+            RequestHandle {
+                ptr: status,
+                poll_fn: poll_normal,
+            }
+            .await?;
         } else {
             return Err(Error::from_ptr(status).unwrap_err());
         }
@@ -66,8 +69,11 @@ impl Endpoint {
             trace!("stream_recv: complete. len={}", length);
             Ok(length)
         } else if UCS_PTR_IS_PTR(status) {
-            Ok(request_handle(status, poll_stream,
-            ).await)
+            Ok(RequestHandle {
+                ptr: status,
+                poll_fn: poll_stream,
+            }
+            .await)
         } else {
             Err(Error::from_ptr(status).unwrap_err())
         }

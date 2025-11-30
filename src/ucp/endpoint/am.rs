@@ -303,7 +303,11 @@ impl AmMsg {
                     trace!("recv_data_vectored: complete");
                     Ok(data_len)
                 } else if UCS_PTR_IS_PTR(status) {
-                    request_handle(status, poll_recv).await;
+                    RequestHandle {
+                        ptr: status,
+                        poll_fn: poll_recv,
+                    }
+                    .await;
                     Ok(data_len)
                 } else {
                     Err(Error::from_ptr(status).unwrap_err())
@@ -671,7 +675,11 @@ async fn am_send(
         trace!("am_send: complete");
         Ok(())
     } else if UCS_PTR_IS_PTR(status) {
-        request_handle(status, poll_normal).await
+        RequestHandle {
+            ptr: status,
+            poll_fn: poll_normal,
+        }
+        .await
     } else {
         Err(Error::from_ptr(status).unwrap_err())
     }
