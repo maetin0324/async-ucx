@@ -1,7 +1,9 @@
 use super::*;
 use derivative::*;
 #[cfg(feature = "am")]
-use std::collections::HashMap;
+use std::cell::RefCell;
+#[cfg(feature = "am")]
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::os::unix::io::AsRawFd;
 #[cfg(feature = "am")]
@@ -18,6 +20,12 @@ pub struct Worker {
     #[cfg(feature = "am")]
     #[derivative(Debug = "ignore")]
     pub(crate) am_streams: RwLock<HashMap<u16, Rc<AmStreamInner>>>,
+    /// Tracks valid reply endpoints for AM messages.
+    /// When a reply_ep becomes invalid (due to endpoint error or closure),
+    /// it is removed from this set to prevent use-after-free.
+    #[cfg(feature = "am")]
+    #[derivative(Debug = "ignore")]
+    pub(crate) valid_reply_eps: RefCell<HashSet<usize>>,
 }
 
 impl Drop for Worker {
@@ -44,6 +52,8 @@ impl Worker {
             context: context.clone(),
             #[cfg(feature = "am")]
             am_streams: RwLock::new(HashMap::new()),
+            #[cfg(feature = "am")]
+            valid_reply_eps: RefCell::new(HashSet::new()),
         }))
     }
 
@@ -175,6 +185,46 @@ impl Worker {
     pub fn flush(&self) {
         let status = unsafe { ucp_worker_flush(self.handle) };
         assert_eq!(status, ucs_status_t::UCS_OK);
+    }
+
+    /// Registers a reply endpoint as valid for AM reply operations.
+    /// This should be called when an AM message is received with a reply_ep.
+    #[cfg(feature = "am")]
+    pub(crate) fn register_reply_ep(&self, ep: ucp_ep_h) {
+        if !ep.is_null() {
+            self.valid_reply_eps.borrow_mut().insert(ep as usize);
+        }
+    }
+
+    /// Unregisters a reply endpoint when the AM message is dropped.
+    /// This removes the endpoint from the valid set.
+    #[cfg(feature = "am")]
+    pub(crate) fn unregister_reply_ep(&self, ep: ucp_ep_h) {
+        if !ep.is_null() {
+            self.valid_reply_eps.borrow_mut().remove(&(ep as usize));
+        }
+    }
+
+    /// Invalidates a reply endpoint when an error occurs.
+    /// This is called from the endpoint error handler when a connection is lost.
+    #[cfg(feature = "am")]
+    pub(crate) fn invalidate_reply_ep(&self, ep: ucp_ep_h) {
+        if !ep.is_null() {
+            let removed = self.valid_reply_eps.borrow_mut().remove(&(ep as usize));
+            if removed {
+                trace!("invalidate_reply_ep: ep={:?} removed from valid set", ep);
+            }
+        }
+    }
+
+    /// Checks if a reply endpoint is still valid.
+    /// Returns true if the endpoint is in the valid set and can be used for reply.
+    #[cfg(feature = "am")]
+    pub(crate) fn is_reply_ep_valid(&self, ep: ucp_ep_h) -> bool {
+        if ep.is_null() {
+            return false;
+        }
+        self.valid_reply_eps.borrow().contains(&(ep as usize))
     }
 }
 

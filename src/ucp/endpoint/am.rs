@@ -110,6 +110,10 @@ pub struct AmMsg {
 
 impl AmMsg {
     fn from_raw(worker: Rc<Worker>, msg: RawMsg) -> Self {
+        // Register the reply_ep as valid when creating the AmMsg
+        if !msg.reply_ep.is_null() {
+            worker.register_reply_ep(msg.reply_ep);
+        }
         AmMsg { worker, msg }
     }
 
@@ -348,8 +352,31 @@ impl AmMsg {
         need_reply: bool,
         proto: Option<AmProto>,
     ) -> Result<(), Error> {
-        assert!(self.need_reply());
-        am_send(self.msg.reply_ep, id, header, data, need_reply, proto).await
+        if !self.need_reply() {
+            warn!("reply_vectorized: message does not support reply");
+            return Err(Error::InvalidParam);
+        }
+
+        let reply_ep = self.msg.reply_ep;
+
+        // Check if reply_ep is still valid before sending
+        if !self.worker.is_reply_ep_valid(reply_ep) {
+            warn!(
+                "reply_vectorized: reply_ep {:?} is no longer valid (endpoint closed or error)",
+                reply_ep
+            );
+            return Err(Error::ConnectionReset);
+        }
+
+        trace!(
+            "reply_vectorized: reply_ep={:?}, id={}, header_len={}, data_len={}",
+            reply_ep,
+            id,
+            header.len(),
+            data.iter().map(|s| s.len()).sum::<usize>()
+        );
+
+        am_send(reply_ep, id, header, data, need_reply, proto).await
     }
 
     fn drop_msg(&mut self, data: AmData) {
@@ -367,6 +394,11 @@ impl AmMsg {
 
 impl Drop for AmMsg {
     fn drop(&mut self) {
+        // Unregister reply_ep from the valid set
+        if !self.msg.reply_ep.is_null() {
+            self.worker.unregister_reply_ep(self.msg.reply_ep);
+        }
+
         if let Some(data) = self.msg.data.take() {
             self.drop_msg(data);
         }
@@ -568,6 +600,12 @@ async fn am_send(
     need_reply: bool,
     proto: Option<AmProto>,
 ) -> Result<(), Error> {
+    // Validate endpoint before sending
+    if endpoint.is_null() {
+        warn!("am_send: endpoint is null, cannot send message");
+        return Err(Error::ConnectionReset);
+    }
+
     unsafe extern "C" fn callback(request: *mut c_void, _status: ucs_status_t, _data: *mut c_void) {
         trace!("am_send: complete");
         let request = &mut *(request as *mut Request);

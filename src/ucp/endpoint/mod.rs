@@ -90,6 +90,10 @@ impl Endpoint {
             let weak: Weak<EndpointInner> = Weak::from_raw(arg as _);
             if let Some(inner) = weak.upgrade() {
                 inner.set_status(status);
+                // Invalidate reply_ep for AM messages when endpoint error occurs.
+                // The ep pointer is the same as reply_ep in AM callbacks.
+                #[cfg(feature = "am")]
+                inner.worker.invalidate_reply_ep(ep);
                 // don't drop weak reference
                 std::mem::forget(weak);
             } else {
