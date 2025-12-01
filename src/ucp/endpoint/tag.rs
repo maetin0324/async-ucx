@@ -53,11 +53,8 @@ impl Worker {
         };
 
         Error::from_ptr(status)?;
-        RequestHandle {
-            ptr: status,
-            poll_fn: poll_tag,
-        }
-        .await
+        request_handle(status, poll_tag,
+        ).await
     }
 
     /// Like `tag_recv`, except that it reads into a slice of buffers.
@@ -99,11 +96,8 @@ impl Worker {
             )
         };
         Error::from_ptr(status)?;
-        RequestHandle {
-            ptr: status,
-            poll_fn: poll_tag,
-        }
-        .await
+        request_handle(status, poll_tag,
+        ).await
         .map(|info| info.1)
     }
 }
@@ -131,11 +125,8 @@ impl Endpoint {
         if status.is_null() {
             trace!("tag_send: complete");
         } else if UCS_PTR_IS_PTR(status) {
-            RequestHandle {
-                ptr: status,
-                poll_fn: poll_normal,
-            }
-            .await?;
+            request_handle(status, poll_normal,
+            ).await?;
         } else {
             return Err(Error::from_ptr(status).unwrap_err());
         }
@@ -173,11 +164,8 @@ impl Endpoint {
         if status.is_null() {
             trace!("tag_send_vectored: complete");
         } else if UCS_PTR_IS_PTR(status) {
-            RequestHandle {
-                ptr: status,
-                poll_fn: poll_normal,
-            }
-            .await?;
+            request_handle(status, poll_normal,
+            ).await?;
         } else {
             return Err(Error::from_ptr(status).unwrap_err());
         }
