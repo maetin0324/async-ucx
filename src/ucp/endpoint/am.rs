@@ -393,6 +393,12 @@ impl AmStream {
     pub async fn wait_msg(&self) -> Option<AmMsg> {
         self.inner.wait_msg(self.worker.clone()).await
     }
+
+    /// Close the stream and wake up all waiting tasks.
+    /// After calling this, `wait_msg()` will return `None` for any waiting tasks.
+    pub fn close(&self) {
+        self.inner.unregister();
+    }
 }
 
 pub(crate) struct AmStreamInner {
@@ -413,10 +419,12 @@ impl AmStreamInner {
         }
     }
 
-    // unregister
+    // unregister and wake up all waiting tasks
     fn unregister(&self) {
         self.unregistered
             .store(true, std::sync::atomic::Ordering::SeqCst);
+        // Wake up all tasks waiting in wait_msg() so they can check the unregistered flag
+        self.notify.notify_waiters();
     }
 
     // callback function
