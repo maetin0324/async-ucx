@@ -185,6 +185,7 @@ impl AmMsg {
     /// User needs to ensure that the buffer is large enough to hold the data.
     /// Otherwise, it will cause memory corruption.
     #[async_backtrace::framed]
+    #[tracing::instrument(level = "trace", skip(self, buf))]
     pub async fn recv_data_single(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         if !self.contains_data() {
             Ok(0)
@@ -196,6 +197,7 @@ impl AmMsg {
 
     /// Receive the message data.
     #[async_backtrace::framed]
+    #[tracing::instrument(level = "trace", skip(self, iov))]
     pub async fn recv_data_vectored(&mut self, iov: &[IoSliceMut<'_>]) -> Result<usize, Error> {
         fn copy_data_to_iov(data: &[u8], iov: &[IoSliceMut<'_>]) -> Result<usize, Error> {
             // return error if buffer size < data length, same with ucx
@@ -322,6 +324,7 @@ impl AmMsg {
     /// Send reply
     /// # Safety
     /// User needs to ensure that the endpoint isn't closed.
+    #[tracing::instrument(level = "trace", skip(self, header, data))]
     pub async unsafe fn reply(
         &self,
         id: u32,
@@ -390,6 +393,7 @@ impl AmStream {
 
     /// Wait active message.
     #[async_backtrace::framed]
+    #[tracing::instrument(level = "trace", skip(self))]
     pub async fn wait_msg(&self) -> Option<AmMsg> {
         self.inner.wait_msg(self.worker.clone()).await
     }
@@ -529,6 +533,7 @@ impl Worker {
 impl Endpoint {
     /// Send active message.
     #[async_backtrace::framed]
+    #[tracing::instrument(level = "trace", skip(self, header, data))]
     pub async fn am_send(
         &self,
         id: u32,
@@ -544,6 +549,7 @@ impl Endpoint {
 
     /// Send active message.
     #[async_backtrace::framed]
+    #[tracing::instrument(level = "trace", skip(self, header, data))]
     pub async fn am_send_vectorized(
         &self,
         id: u32,
@@ -568,6 +574,7 @@ pub enum AmProto {
 }
 
 #[async_backtrace::framed]
+#[tracing::instrument(level = "trace", skip(endpoint, header, data))]
 async fn am_send(
     endpoint: ucp_ep_h,
     id: u32,
