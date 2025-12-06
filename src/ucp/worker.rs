@@ -158,6 +158,7 @@ impl Worker {
     }
 
     /// Explicitly progresses all communication operations on a worker.
+    #[tracing::instrument(level = "trace", skip(self))]
     pub fn progress(&self) -> u32 {
         unsafe { ucp_worker_progress(self.handle) }
     }
