@@ -1,5 +1,6 @@
 use super::*;
 use std::io::{IoSlice, IoSliceMut};
+use ucx1_sys::{ucp_op_attr_t, ucp_request_param_t};
 
 impl Worker {
     /// Receives a message with `tag`.
@@ -28,7 +29,8 @@ impl Worker {
         unsafe extern "C" fn callback(
             request: *mut c_void,
             status: ucs_status_t,
-            info: *mut ucp_tag_recv_info,
+            info: *const ucp_tag_recv_info,
+            _user_data: *mut c_void,
         ) {
             let length = (*info).length;
             trace!(
@@ -40,21 +42,26 @@ impl Worker {
             let request = &mut *(request as *mut Request);
             request.waker.wake();
         }
+        let param = ucp_request_param_t {
+            op_attr_mask: ucp_op_attr_t::UCP_OP_ATTR_FIELD_CALLBACK as u32,
+            cb: ucx1_sys::ucp_request_param_t__bindgen_ty_1 {
+                recv: Some(callback),
+            },
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
+        };
         let status = unsafe {
-            ucp_tag_recv_nb(
+            ucp_tag_recv_nbx(
                 self.handle,
                 buf.as_mut_ptr() as _,
                 buf.len() as _,
-                ucp_dt_make_contig(1),
                 tag,
                 tag_mask,
-                Some(callback),
+                &param,
             )
         };
 
         Error::from_ptr(status)?;
-        request_handle(status, poll_tag,
-        ).await
+        request_handle(status, poll_tag).await
     }
 
     /// Like `tag_recv`, except that it reads into a slice of buffers.
@@ -72,7 +79,8 @@ impl Worker {
         unsafe extern "C" fn callback(
             request: *mut c_void,
             status: ucs_status_t,
-            info: *mut ucp_tag_recv_info,
+            info: *const ucp_tag_recv_info,
+            _user_data: *mut c_void,
         ) {
             let length = (*info).length;
             trace!(
@@ -84,21 +92,29 @@ impl Worker {
             let request = &mut *(request as *mut Request);
             request.waker.wake();
         }
+        let param = ucp_request_param_t {
+            op_attr_mask: (ucp_op_attr_t::UCP_OP_ATTR_FIELD_CALLBACK as u32
+                | ucp_op_attr_t::UCP_OP_ATTR_FIELD_DATATYPE as u32),
+            datatype: ucp_dt_type::UCP_DATATYPE_IOV as _,
+            cb: ucx1_sys::ucp_request_param_t__bindgen_ty_1 {
+                recv: Some(callback),
+            },
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
+        };
         let status = unsafe {
-            ucp_tag_recv_nb(
+            ucp_tag_recv_nbx(
                 self.handle,
                 iov.as_ptr() as _,
                 iov.len() as _,
-                ucp_dt_type::UCP_DATATYPE_IOV as _,
                 tag,
                 u64::max_value(),
-                Some(callback),
+                &param,
             )
         };
         Error::from_ptr(status)?;
-        request_handle(status, poll_tag,
-        ).await
-        .map(|info| info.1)
+        request_handle(status, poll_tag)
+            .await
+            .map(|info| info.1)
     }
 }
 
@@ -107,26 +123,35 @@ impl Endpoint {
     #[async_backtrace::framed]
     pub async fn tag_send(&self, tag: u64, buf: &[u8]) -> Result<usize, Error> {
         trace!("tag_send: endpoint={:?} len={}", self.handle, buf.len());
-        unsafe extern "C" fn callback(request: *mut c_void, status: ucs_status_t) {
+        unsafe extern "C" fn callback(
+            request: *mut c_void,
+            status: ucs_status_t,
+            _user_data: *mut c_void,
+        ) {
             trace!("tag_send: complete. req={:?}, status={:?}", request, status);
             let request = &mut *(request as *mut Request);
             request.waker.wake();
         }
+        let param = ucp_request_param_t {
+            op_attr_mask: ucp_op_attr_t::UCP_OP_ATTR_FIELD_CALLBACK as u32,
+            cb: ucx1_sys::ucp_request_param_t__bindgen_ty_1 {
+                send: Some(callback),
+            },
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
+        };
         let status = unsafe {
-            ucp_tag_send_nb(
+            ucp_tag_send_nbx(
                 self.get_handle()?,
                 buf.as_ptr() as _,
                 buf.len() as _,
-                ucp_dt_make_contig(1),
                 tag,
-                Some(callback),
+                &param,
             )
         };
         if status.is_null() {
             trace!("tag_send: complete");
         } else if UCS_PTR_IS_PTR(status) {
-            request_handle(status, poll_normal,
-            ).await?;
+            request_handle(status, poll_normal).await?;
         } else {
             return Err(Error::from_ptr(status).unwrap_err());
         }
@@ -141,7 +166,11 @@ impl Endpoint {
             self.handle,
             iov.len()
         );
-        unsafe extern "C" fn callback(request: *mut c_void, status: ucs_status_t) {
+        unsafe extern "C" fn callback(
+            request: *mut c_void,
+            status: ucs_status_t,
+            _user_data: *mut c_void,
+        ) {
             trace!(
                 "tag_send_vectored: complete. req={:?}, status={:?}",
                 request,
@@ -150,22 +179,29 @@ impl Endpoint {
             let request = &mut *(request as *mut Request);
             request.waker.wake();
         }
+        let param = ucp_request_param_t {
+            op_attr_mask: (ucp_op_attr_t::UCP_OP_ATTR_FIELD_CALLBACK as u32
+                | ucp_op_attr_t::UCP_OP_ATTR_FIELD_DATATYPE as u32),
+            datatype: ucp_dt_type::UCP_DATATYPE_IOV as _,
+            cb: ucx1_sys::ucp_request_param_t__bindgen_ty_1 {
+                send: Some(callback),
+            },
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
+        };
         let status = unsafe {
-            ucp_tag_send_nb(
+            ucp_tag_send_nbx(
                 self.get_handle()?,
                 iov.as_ptr() as _,
                 iov.len() as _,
-                ucp_dt_type::UCP_DATATYPE_IOV as _,
                 tag,
-                Some(callback),
+                &param,
             )
         };
         let total_len = iov.iter().map(|v| v.len()).sum();
         if status.is_null() {
             trace!("tag_send_vectored: complete");
         } else if UCS_PTR_IS_PTR(status) {
-            request_handle(status, poll_normal,
-            ).await?;
+            request_handle(status, poll_normal).await?;
         } else {
             return Err(Error::from_ptr(status).unwrap_err());
         }

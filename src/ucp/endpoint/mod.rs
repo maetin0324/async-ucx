@@ -6,6 +6,7 @@ use std::pin::Pin;
 use std::rc::Weak;
 use std::sync::atomic::AtomicBool;
 use std::task::Poll;
+use ucx1_sys::{ucp_op_attr_t, ucp_request_param_t};
 
 #[cfg(feature = "am")]
 mod am;
@@ -94,7 +95,12 @@ impl Endpoint {
                 std::mem::forget(weak);
             } else {
                 // no strong rc, force close endpoint here
-                let status = ucp_ep_close_nb(ep, ucp_ep_close_mode::UCP_EP_CLOSE_MODE_FORCE as _);
+                let param = ucp_request_param_t {
+                    op_attr_mask: ucp_op_attr_t::UCP_OP_ATTR_FIELD_FLAGS as u32,
+                    flags: ucp_ep_close_mode::UCP_EP_CLOSE_MODE_FORCE as u32,
+                    ..MaybeUninit::zeroed().assume_init()
+                };
+                let status = ucp_ep_close_nbx(ep, &param);
                 let _ = Error::from_ptr(status)
                     .map_err(|err| error!("Force close endpoint failed, {}", err));
             }
@@ -214,12 +220,23 @@ impl Endpoint {
     pub async fn flush(&self) -> Result<(), Error> {
         let handle = self.get_handle()?;
         trace!("flush: endpoint={:?}", handle);
-        unsafe extern "C" fn callback(request: *mut c_void, _status: ucs_status_t) {
+        unsafe extern "C" fn callback(
+            request: *mut c_void,
+            _status: ucs_status_t,
+            _user_data: *mut c_void,
+        ) {
             trace!("flush: complete");
             let request = &mut *(request as *mut Request);
             request.waker.wake();
         }
-        let status = unsafe { ucp_ep_flush_nb(handle, 0, Some(callback)) };
+        let param = ucp_request_param_t {
+            op_attr_mask: ucp_op_attr_t::UCP_OP_ATTR_FIELD_CALLBACK as u32,
+            cb: ucx1_sys::ucp_request_param_t__bindgen_ty_1 {
+                send: Some(callback),
+            },
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
+        };
+        let status = unsafe { ucp_ep_flush_nbx(handle, &param) };
         if status.is_null() {
             trace!("flush: complete");
             Ok(())
@@ -245,7 +262,12 @@ impl Endpoint {
         } else {
             ucp_ep_close_mode::UCP_EP_CLOSE_MODE_FLUSH as u32
         };
-        let status = unsafe { ucp_ep_close_nb(self.handle, mode) };
+        let param = ucp_request_param_t {
+            op_attr_mask: ucp_op_attr_t::UCP_OP_ATTR_FIELD_FLAGS as u32,
+            flags: mode,
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
+        };
+        let status = unsafe { ucp_ep_close_nbx(self.handle, &param) };
         if status.is_null() {
             trace!("close: complete");
             self.inner.closed();
@@ -288,12 +310,12 @@ impl Drop for Endpoint {
     fn drop(&mut self) {
         if !self.inner.is_closed() {
             trace!("destroy endpoint={:?}", self.handle);
-            let status = unsafe {
-                ucp_ep_close_nb(
-                    self.handle,
-                    ucp_ep_close_mode::UCP_EP_CLOSE_MODE_FORCE as u32,
-                )
+            let param = ucp_request_param_t {
+                op_attr_mask: ucp_op_attr_t::UCP_OP_ATTR_FIELD_FLAGS as u32,
+                flags: ucp_ep_close_mode::UCP_EP_CLOSE_MODE_FORCE as u32,
+                ..unsafe { MaybeUninit::zeroed().assume_init() }
             };
+            let status = unsafe { ucp_ep_close_nbx(self.handle, &param) };
             let _ = Error::from_ptr(status).map_err(|err| error!("Failed to force close, {}", err));
             self.inner.closed();
         }
