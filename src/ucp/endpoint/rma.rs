@@ -1,7 +1,7 @@
 use super::*;
 use ucx1_sys::{
-    UCP_MEM_MAP_PROT_LOCAL_READ, UCP_MEM_MAP_PROT_LOCAL_WRITE, UCP_MEM_MAP_PROT_REMOTE_READ,
-    UCP_MEM_MAP_PROT_REMOTE_WRITE,
+    ucp_op_attr_t, ucp_request_param_t, UCP_MEM_MAP_PROT_LOCAL_READ, UCP_MEM_MAP_PROT_LOCAL_WRITE,
+    UCP_MEM_MAP_PROT_REMOTE_READ, UCP_MEM_MAP_PROT_REMOTE_WRITE,
 };
 
 /// A memory region allocated through UCP library,
@@ -122,27 +122,37 @@ impl Endpoint {
     #[async_backtrace::framed]
     pub async fn put(&self, buf: &[u8], remote_addr: u64, rkey: &RKey) -> Result<(), Error> {
         trace!("put: endpoint={:?} len={}", self.handle, buf.len());
-        unsafe extern "C" fn callback(request: *mut c_void, status: ucs_status_t) {
+        unsafe extern "C" fn callback(
+            request: *mut c_void,
+            status: ucs_status_t,
+            _user_data: *mut c_void,
+        ) {
             trace!("put: complete. req={:?}, status={:?}", request, status);
             let request = &mut *(request as *mut Request);
             request.waker.wake();
         }
+        let param = ucp_request_param_t {
+            op_attr_mask: ucp_op_attr_t::UCP_OP_ATTR_FIELD_CALLBACK as u32,
+            cb: ucx1_sys::ucp_request_param_t__bindgen_ty_1 {
+                send: Some(callback),
+            },
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
+        };
         let status = unsafe {
-            ucp_put_nb(
+            ucp_put_nbx(
                 self.get_handle()?,
                 buf.as_ptr() as _,
                 buf.len() as _,
                 remote_addr,
                 rkey.handle,
-                Some(callback),
+                &param,
             )
         };
         if status.is_null() {
             trace!("put: complete.");
             Ok(())
         } else if UCS_PTR_IS_PTR(status) {
-            request_handle(status, poll_normal,
-            ).await
+            request_handle(status, poll_normal).await
         } else {
             Error::from_ptr(status)
         }
@@ -152,27 +162,37 @@ impl Endpoint {
     #[async_backtrace::framed]
     pub async fn get(&self, buf: &mut [u8], remote_addr: u64, rkey: &RKey) -> Result<(), Error> {
         trace!("get: endpoint={:?} len={}", self.handle, buf.len());
-        unsafe extern "C" fn callback(request: *mut c_void, status: ucs_status_t) {
+        unsafe extern "C" fn callback(
+            request: *mut c_void,
+            status: ucs_status_t,
+            _user_data: *mut c_void,
+        ) {
             trace!("get: complete. req={:?}, status={:?}", request, status);
             let request = &mut *(request as *mut Request);
             request.waker.wake();
         }
+        let param = ucp_request_param_t {
+            op_attr_mask: ucp_op_attr_t::UCP_OP_ATTR_FIELD_CALLBACK as u32,
+            cb: ucx1_sys::ucp_request_param_t__bindgen_ty_1 {
+                send: Some(callback),
+            },
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
+        };
         let status = unsafe {
-            ucp_get_nb(
+            ucp_get_nbx(
                 self.get_handle()?,
                 buf.as_mut_ptr() as _,
                 buf.len() as _,
                 remote_addr,
                 rkey.handle,
-                Some(callback),
+                &param,
             )
         };
         if status.is_null() {
             trace!("get: complete.");
             Ok(())
         } else if UCS_PTR_IS_PTR(status) {
-            request_handle(status, poll_normal,
-            ).await
+            request_handle(status, poll_normal).await
         } else {
             Error::from_ptr(status)
         }
