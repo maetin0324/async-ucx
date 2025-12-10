@@ -81,6 +81,8 @@ struct RawMsg {
     data: Option<AmData>,
     reply_ep: ucp_ep_h,
     attr: u64,
+    /// Whether Rndv completion has been notified (to avoid double notification)
+    rndv_complete_notified: bool,
 }
 
 impl RawMsg {
@@ -92,12 +94,21 @@ impl RawMsg {
         reply_ep: ucp_ep_h,
         attr: u64,
     ) -> Self {
+        let am_data = AmData::from_raw(data, data_len, attr);
+        let is_rndv = matches!(am_data, Some(AmData::Rndv { .. }));
+
+        // Notify Rndv start when receiving Rndv message
+        if is_rndv {
+            crate::ucp::notify_rndv_start();
+        }
+
         RawMsg {
             id,
             header: header.to_owned(),
-            data: AmData::from_raw(data, data_len, attr),
+            data: am_data,
             reply_ep,
             attr,
+            rndv_complete_notified: !is_rndv, // If not Rndv, mark as already notified
         }
     }
 }
@@ -236,9 +247,7 @@ impl AmMsg {
             }
             Some(AmData::Rndv { desc, len }) => {
                 // rndv message, need to receive
-                // Track Rndv operation for blocking mode
-                let _rndv_guard = crate::ucp::RndvGuard::new();
-
+                // Note: Rndv start was already notified when RawMsg was created
                 let (data_desc, data_len) = (desc, len);
 
                 unsafe extern "C" fn callback(
@@ -300,7 +309,9 @@ impl AmMsg {
                         param.as_ptr(),
                     )
                 };
-                if status.is_null() {
+
+                // Notify Rndv complete after the operation finishes
+                let result = if status.is_null() {
                     trace!("recv_data_vectored: complete");
                     Ok(data_len)
                 } else if UCS_PTR_IS_PTR(status) {
@@ -308,7 +319,12 @@ impl AmMsg {
                     Ok(data_len)
                 } else {
                     Err(Error::from_ptr(status).unwrap_err())
-                }
+                };
+
+                // Mark Rndv receive as complete and set flag to prevent double notification
+                self.msg.rndv_complete_notified = true;
+                crate::ucp::notify_rndv_complete();
+                result
             }
             None => {
                 // no data
@@ -373,6 +389,10 @@ impl AmMsg {
 
 impl Drop for AmMsg {
     fn drop(&mut self) {
+        // If Rndv message was not fully processed, notify completion now
+        if !self.msg.rndv_complete_notified {
+            crate::ucp::notify_rndv_complete();
+        }
         if let Some(data) = self.msg.data.take() {
             self.drop_msg(data);
         }
