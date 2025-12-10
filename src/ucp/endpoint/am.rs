@@ -236,6 +236,9 @@ impl AmMsg {
             }
             Some(AmData::Rndv { desc, len }) => {
                 // rndv message, need to receive
+                // Track Rndv operation for blocking mode
+                let _rndv_guard = crate::ucp::RndvGuard::new();
+
                 let (data_desc, data_len) = (desc, len);
 
                 unsafe extern "C" fn callback(
@@ -583,6 +586,12 @@ async fn am_send(
     need_reply: bool,
     proto: Option<AmProto>,
 ) -> Result<(), Error> {
+    // Track Rndv send operation for blocking mode
+    let _rndv_guard = match proto {
+        Some(AmProto::Rndv) => Some(crate::ucp::RndvGuard::new()),
+        _ => None,
+    };
+
     unsafe extern "C" fn callback(request: *mut c_void, _status: ucs_status_t, _data: *mut c_void) {
         trace!("am_send: complete");
         let request = &mut *(request as *mut Request);

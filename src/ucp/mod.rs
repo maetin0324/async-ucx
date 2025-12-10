@@ -1,6 +1,7 @@
 //! Unified Communication Protocol (UCP).
 
 use futures::task::AtomicWaker;
+use std::cell::RefCell;
 use std::ffi::CString;
 use std::mem::MaybeUninit;
 use std::os::raw::c_void;
@@ -18,6 +19,70 @@ use crate::Error;
 pub use self::endpoint::*;
 pub use self::listener::*;
 pub use self::worker::*;
+
+// ==================== Rndv Tracking Callbacks ====================
+
+thread_local! {
+    static RNDV_CALLBACKS: RefCell<Option<RndvCallbacks>> = const { RefCell::new(None) };
+}
+
+/// Callbacks for tracking Rndv (Rendezvous) operations.
+pub struct RndvCallbacks {
+    /// Called when a Rndv operation starts.
+    pub on_start: Box<dyn Fn()>,
+    /// Called when a Rndv operation completes.
+    pub on_complete: Box<dyn Fn()>,
+}
+
+/// Set the Rndv tracking callbacks.
+pub fn set_rndv_callbacks(callbacks: RndvCallbacks) {
+    RNDV_CALLBACKS.with(|c| *c.borrow_mut() = Some(callbacks));
+}
+
+/// Notify that a Rndv operation has started.
+pub fn notify_rndv_start() {
+    RNDV_CALLBACKS.with(|c| {
+        if let Some(cb) = c.borrow().as_ref() {
+            (cb.on_start)();
+        }
+    });
+}
+
+/// Notify that a Rndv operation has completed.
+pub fn notify_rndv_complete() {
+    RNDV_CALLBACKS.with(|c| {
+        if let Some(cb) = c.borrow().as_ref() {
+            (cb.on_complete)();
+        }
+    });
+}
+
+/// RAII guard for tracking Rndv operations.
+pub struct RndvGuard {
+    _phantom: std::marker::PhantomData<()>,
+}
+
+impl RndvGuard {
+    /// Create a new RndvGuard, notifying that a Rndv operation has started.
+    pub fn new() -> Self {
+        notify_rndv_start();
+        Self {
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl Default for RndvGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for RndvGuard {
+    fn drop(&mut self) {
+        notify_rndv_complete();
+    }
+}
 
 /// The configuration for UCP application context.
 #[derive(Debug)]
