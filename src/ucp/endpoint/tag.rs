@@ -60,8 +60,21 @@ impl Worker {
             )
         };
 
-        Error::from_ptr(status)?;
-        request_handle(status, poll_tag).await
+        // ucp_tag_recv_nbx は (1) NULL: immediate completion, (2) request pointer:
+        // pending, (3) error pointer の 3 状態を返す。tag_send 側は 3 状態を網羅
+        // しているのに、ここでは (1) を見落として `request_handle` に渡してしまい、
+        // `ucp_tag_recv_request_test(UCS_OK, ...)` で SIGSEGV になっていた。
+        // (warmup 中に sender 側 message が先に届いて buffer 済 → recv 投函時に
+        //  即時完了するケースが頻発する)。
+        if status.is_null() {
+            // データはすでに `buf` に書き込まれている。tag/length は呼び出し側で
+            // 既知 (collective は固定長メッセージ) なので入力 tag と buf 長を返す。
+            return Ok((tag, buf.len()));
+        } else if UCS_PTR_IS_PTR(status) {
+            return request_handle(status, poll_tag).await;
+        } else {
+            return Err(Error::from_ptr(status).unwrap_err());
+        }
     }
 
     /// Like `tag_recv`, except that it reads into a slice of buffers.
@@ -111,10 +124,15 @@ impl Worker {
                 &param,
             )
         };
-        Error::from_ptr(status)?;
-        request_handle(status, poll_tag)
-            .await
-            .map(|info| info.1)
+        // 同 tag_recv_mask と同じ理由で immediate-completion を扱う必要がある。
+        if status.is_null() {
+            let total: usize = iov.iter().map(|v| v.len()).sum();
+            return Ok(total);
+        } else if UCS_PTR_IS_PTR(status) {
+            return request_handle(status, poll_tag).await.map(|info| info.1);
+        } else {
+            return Err(Error::from_ptr(status).unwrap_err());
+        }
     }
 }
 
