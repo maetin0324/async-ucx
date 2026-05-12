@@ -241,7 +241,7 @@ impl Endpoint {
             trace!("flush: complete");
             Ok(())
         } else if UCS_PTR_IS_PTR(status) {
-            request_handle(status, poll_normal).await
+            request_handle(self.inner.worker.handle, status, poll_normal).await
         } else {
             Error::from_ptr(status)
         }
@@ -323,9 +323,19 @@ impl Drop for Endpoint {
 }
 
 /// A handle to the request returned from async IO functions.
+///
+/// `worker` is used during cancellation in `Drop`: if the request is still
+/// in progress when this handle is dropped (e.g., the caller's future is
+/// canceled by `tokio::time::timeout` or task abortion), we must call
+/// `ucp_request_cancel` and then drive the worker until UCX finishes
+/// touching the (caller-owned) buffer. Skipping this leaves UCX with a
+/// dangling pointer into freed memory and corrupts the heap a few
+/// allocations later — the precise symptom we hit under mdtest-hard's
+/// high-rate small-write workload.
 struct RequestHandle<T> {
     ptr: ucs_status_ptr_t,
     poll_fn: unsafe fn(ucs_status_ptr_t) -> Poll<T>,
+    worker: ucp_worker_h,
 }
 
 impl<T> Future for RequestHandle<T> {
@@ -342,6 +352,29 @@ impl<T> Future for RequestHandle<T> {
 
 impl<T> Drop for RequestHandle<T> {
     fn drop(&mut self) {
+        // If the request is still in progress, the caller's buffer is still
+        // referenced by UCX. We MUST cancel and wait for the cancellation
+        // callback to fire before calling ucp_request_free; otherwise the
+        // buffer may be freed by the caller while UCX still reads/writes it.
+        let in_progress = unsafe {
+            !self.worker.is_null()
+                && ucp_request_check_status(self.ptr) == ucs_status_t::UCS_INPROGRESS
+        };
+        if in_progress {
+            trace!("request cancel: {:?}", self.ptr);
+            unsafe { ucp_request_cancel(self.worker, self.ptr) };
+            // Drive the worker until UCX delivers the cancellation callback.
+            // ucp_worker_progress is non-blocking and returns the number of
+            // events processed; we just need it to flip the request status
+            // out of UCS_INPROGRESS.
+            loop {
+                unsafe { ucp_worker_progress(self.worker) };
+                let st = unsafe { ucp_request_check_status(self.ptr) };
+                if st != ucs_status_t::UCS_INPROGRESS {
+                    break;
+                }
+            }
+        }
         trace!("request free: {:?}", self.ptr);
         unsafe { ucp_request_free(self.ptr as _) };
     }
@@ -356,8 +389,20 @@ unsafe fn poll_normal(ptr: ucs_status_ptr_t) -> Poll<Result<(), Error>> {
     }
 }
 
-/// Wrapper function to create a RequestHandle with async-backtrace support
+/// Wrapper function to create a RequestHandle with async-backtrace support.
+/// The `worker` handle is required so that, on cancel, we can call
+/// `ucp_request_cancel` and drain the cancellation callback before letting
+/// the caller's buffer go out of scope.
 #[async_backtrace::framed]
-async fn request_handle<T>(ptr: ucs_status_ptr_t, poll_fn: unsafe fn(ucs_status_ptr_t) -> Poll<T>) -> T {
-    RequestHandle { ptr, poll_fn }.await
+async fn request_handle<T>(
+    worker: ucp_worker_h,
+    ptr: ucs_status_ptr_t,
+    poll_fn: unsafe fn(ucs_status_ptr_t) -> Poll<T>,
+) -> T {
+    RequestHandle {
+        ptr,
+        poll_fn,
+        worker,
+    }
+    .await
 }

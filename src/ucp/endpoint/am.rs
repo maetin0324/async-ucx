@@ -301,7 +301,7 @@ impl AmMsg {
                     trace!("recv_data_vectored: complete");
                     Ok(data_len)
                 } else if UCS_PTR_IS_PTR(status) {
-                    request_handle(status, poll_recv).await;
+                    request_handle(self.worker.handle, status, poll_recv).await;
                     Ok(data_len)
                 } else {
                     Err(Error::from_ptr(status).unwrap_err())
@@ -352,7 +352,16 @@ impl AmMsg {
         proto: Option<AmProto>,
     ) -> Result<(), Error> {
         assert!(self.need_reply());
-        am_send(self.msg.reply_ep, id, header, data, need_reply, proto).await
+        am_send(
+            self.worker.handle,
+            self.msg.reply_ep,
+            id,
+            header,
+            data,
+            need_reply,
+            proto,
+        )
+        .await
     }
 
     fn drop_msg(&mut self, data: AmData) {
@@ -559,7 +568,16 @@ impl Endpoint {
         proto: Option<AmProto>,
     ) -> Result<(), Error> {
         let endpoint = self.get_handle()?;
-        am_send(endpoint, id, header, data, need_reply, proto).await
+        am_send(
+            self.inner.worker.handle,
+            endpoint,
+            id,
+            header,
+            data,
+            need_reply,
+            proto,
+        )
+        .await
     }
 }
 
@@ -574,8 +592,9 @@ pub enum AmProto {
 }
 
 #[async_backtrace::framed]
-#[tracing::instrument(level = "trace", skip(endpoint, header, data))]
+#[tracing::instrument(level = "trace", skip(worker, endpoint, header, data))]
 async fn am_send(
+    worker: ucp_worker_h,
     endpoint: ucp_ep_h,
     id: u32,
     header: &[u8],
@@ -648,7 +667,7 @@ async fn am_send(
         trace!("am_send: complete");
         Ok(())
     } else if UCS_PTR_IS_PTR(status) {
-        request_handle(status, poll_normal).await
+        request_handle(worker, status, poll_normal).await
     } else {
         Err(Error::from_ptr(status).unwrap_err())
     }

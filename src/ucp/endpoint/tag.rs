@@ -71,7 +71,7 @@ impl Worker {
             // 既知 (collective は固定長メッセージ) なので入力 tag と buf 長を返す。
             return Ok((tag, buf.len()));
         } else if UCS_PTR_IS_PTR(status) {
-            return request_handle(status, poll_tag).await;
+            return request_handle(self.handle, status, poll_tag).await;
         } else {
             return Err(Error::from_ptr(status).unwrap_err());
         }
@@ -129,7 +129,7 @@ impl Worker {
             let total: usize = iov.iter().map(|v| v.len()).sum();
             return Ok(total);
         } else if UCS_PTR_IS_PTR(status) {
-            return request_handle(status, poll_tag).await.map(|info| info.1);
+            return request_handle(self.handle, status, poll_tag).await.map(|info| info.1);
         } else {
             return Err(Error::from_ptr(status).unwrap_err());
         }
@@ -169,7 +169,7 @@ impl Endpoint {
         if status.is_null() {
             trace!("tag_send: complete");
         } else if UCS_PTR_IS_PTR(status) {
-            request_handle(status, poll_normal).await?;
+            request_handle(self.inner.worker.handle, status, poll_normal).await?;
         } else {
             return Err(Error::from_ptr(status).unwrap_err());
         }
@@ -219,7 +219,7 @@ impl Endpoint {
         if status.is_null() {
             trace!("tag_send_vectored: complete");
         } else if UCS_PTR_IS_PTR(status) {
-            request_handle(status, poll_normal).await?;
+            request_handle(self.inner.worker.handle, status, poll_normal).await?;
         } else {
             return Err(Error::from_ptr(status).unwrap_err());
         }
