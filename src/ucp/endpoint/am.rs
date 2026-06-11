@@ -364,6 +364,74 @@ impl AmMsg {
         .await
     }
 
+    /// Zero-copy direct RDMA WRITE from server's `buf` to remote address
+    /// `remote_addr` accessible via `rkey_buf` (packed remote-access key
+    /// the originator shipped in its request header). Uses the AM
+    /// message's `reply_ep` so the RDMA WRITE returns to the originator
+    /// rather than the daemon. After the put completes, the caller
+    /// typically follows with a tiny `reply_vectorized` ACK so the
+    /// originator's listener can demux by corr_id.
+    ///
+    /// # Safety
+    /// - The originator must keep `(remote_addr, len)` mapped + writable
+    ///   until completion.
+    /// - The remote rkey must have been packed by the same UCX context
+    ///   the `reply_ep` is connected to.
+    /// - Caller must ensure the reply endpoint isn't closed.
+    pub async unsafe fn reply_put(
+        &self,
+        buf: &[u8],
+        remote_addr: u64,
+        rkey_buf: &[u8],
+    ) -> Result<(), Error> {
+        assert!(self.need_reply());
+
+        // Unpack the rkey against the reply endpoint's context.
+        let mut rkey_handle = MaybeUninit::<*mut ucp_rkey>::uninit();
+        let status = ucp_ep_rkey_unpack(
+            self.msg.reply_ep,
+            rkey_buf.as_ptr() as _,
+            rkey_handle.as_mut_ptr(),
+        );
+        Error::from_status(status)?;
+        let rkey_handle = rkey_handle.assume_init();
+
+        // Issue ucp_put_nbx. Drop the rkey only after the put completes.
+        unsafe extern "C" fn callback(
+            request: *mut c_void,
+            status: ucs_status_t,
+            _user_data: *mut c_void,
+        ) {
+            let request = &mut *(request as *mut Request);
+            request.waker.wake();
+            let _ = status;
+        }
+        let param = ucp_request_param_t {
+            op_attr_mask: ucp_op_attr_t::UCP_OP_ATTR_FIELD_CALLBACK as u32,
+            cb: ucx1_sys::ucp_request_param_t__bindgen_ty_1 {
+                send: Some(callback),
+            },
+            ..MaybeUninit::zeroed().assume_init()
+        };
+        let status_ptr = ucp_put_nbx(
+            self.msg.reply_ep,
+            buf.as_ptr() as _,
+            buf.len() as _,
+            remote_addr,
+            rkey_handle,
+            &param,
+        );
+        let result = if status_ptr.is_null() {
+            Ok(())
+        } else if UCS_PTR_IS_PTR(status_ptr) {
+            request_handle(self.worker.handle, status_ptr, poll_normal).await
+        } else {
+            Error::from_ptr(status_ptr)
+        };
+        ucp_rkey_destroy(rkey_handle);
+        result
+    }
+
     fn drop_msg(&mut self, data: AmData) {
         match data {
             AmData::Eager(_) => (),
@@ -652,6 +720,17 @@ async fn am_send(
         }
     };
 
+    // Diagnostic split: measure ucp_am_send_nbx call time vs await time
+    // to identify whether am_send slowness comes from UCX local send queue
+    // or async completion wait. Enabled by BENCHFS_UCX_AM_BREAKDOWN=1.
+    let breakdown_enabled = std::env::var("BENCHFS_UCX_AM_BREAKDOWN")
+        .map(|v| v != "0")
+        .unwrap_or(false);
+    let t_call_start = if breakdown_enabled {
+        Some(std::time::Instant::now())
+    } else {
+        None
+    };
     let status = unsafe {
         ucp_am_send_nbx(
             endpoint,
@@ -663,11 +742,37 @@ async fn am_send(
             param.as_mut_ptr(),
         )
     };
+    let call_us = t_call_start
+        .map(|s| s.elapsed().as_micros() as u64)
+        .unwrap_or(0);
     if status.is_null() {
+        if breakdown_enabled {
+            tracing::debug!(
+                target: "ucx_am_breakdown",
+                "AM_SEND_BREAKDOWN am_id={} path=imm_ok call_us={} await_us=0 data_len={}",
+                id, call_us, count
+            );
+        }
         trace!("am_send: complete");
         Ok(())
     } else if UCS_PTR_IS_PTR(status) {
-        request_handle(worker, status, poll_normal).await
+        let t_await_start = if breakdown_enabled {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
+        let r = request_handle(worker, status, poll_normal).await;
+        if breakdown_enabled {
+            let await_us = t_await_start
+                .map(|s| s.elapsed().as_micros() as u64)
+                .unwrap_or(0);
+            tracing::debug!(
+                target: "ucx_am_breakdown",
+                "AM_SEND_BREAKDOWN am_id={} path=async call_us={} await_us={} data_len={}",
+                id, call_us, await_us, count
+            );
+        }
+        r
     } else {
         Err(Error::from_ptr(status).unwrap_err())
     }

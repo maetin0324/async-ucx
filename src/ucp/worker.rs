@@ -27,6 +27,15 @@ impl Drop for Worker {
 }
 
 impl Worker {
+    /// Expose the UCX context this worker belongs to.
+    /// Required so benchfs ucx_relay can register memory regions with the
+    /// same context that endpoints (connected via this worker) will unpack
+    /// rkeys against. Used for zero-copy direct RDMA from server → client
+    /// SHM arena, bypassing the daemon memcpy path.
+    pub fn context(&self) -> Arc<Context> {
+        self.context.clone()
+    }
+
     pub(super) fn new(context: &Arc<Context>) -> Result<Rc<Self>, Error> {
         let mut params = MaybeUninit::<ucp_worker_params_t>::uninit();
         unsafe {
